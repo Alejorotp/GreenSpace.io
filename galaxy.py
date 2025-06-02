@@ -3,29 +3,23 @@
 import pygame
 import random
 import math
-from config import SCREEN_WIDTH, SCREEN_HEIGHT, WORLD_RADIUS, WORLD_CENTER_X, WORLD_CENTER_Y, \
-                   SUN_RADIUS, SUN_COLOR, NUM_SOLAR_SYSTEM_PLANETS, MIN_ORBIT_RADIUS, MAX_ORBIT_RADIUS
+from config import (SCREEN_WIDTH, SCREEN_HEIGHT, WORLD_RADIUS, WORLD_CENTER_X, WORLD_CENTER_Y,
+                    SUN_RADIUS, SUN_COLOR, NUM_SOLAR_SYSTEM_PLANETS, MIN_ORBIT_RADIUS,
+                    MAX_ORBIT_RADIUS, CELL_SIZE,
+                    NUM_GENERAL_GARBAGE, GARBAGE_PER_PLANET_CLUSTER,
+                    PLANET_GARBAGE_ZONE_RADIUS_FACTOR, MIN_DIST_GARBAGE_FROM_PLANET_SURFACE,
+                    GARBAGE_ITEM_SIZE_RANGE)
+from garbage import Garbage # Import the new Garbage class
 
-try:
-    from config import CELL_SIZE
-except ImportError:
-    CELL_SIZE = 200
-
-# --- Helper function for pixel art circle (used for planets) ---
+# Helper function for drawing pixel art circles (used for planets).
 def draw_pixel_circle(surface, color, center_x, center_y, radius):
     radius = int(radius)
-    # Basic culling for the circle based on its bounding box
-    # center_x and center_y are already screen coordinates here
     if center_x + radius < 0 or center_x - radius > SCREEN_WIDTH or \
        center_y + radius < 0 or center_y - radius > SCREEN_HEIGHT:
         return
-
-    # Use pygame.draw.circle for performance.
-    # For small radii, it will still look quite pixelated.
     pygame.draw.circle(surface, color, (int(center_x), int(center_y)), radius)
 
-
-# --- Helper function for pixel art star ---
+# Helper function for drawing pixel art stars.
 def draw_pixel_star(surface, screen_x, screen_y, base_color, size_category):
     core_size = 1
     if size_category == 'medium': core_size = 2
@@ -68,6 +62,7 @@ def draw_pixel_star(surface, screen_x, screen_y, base_color, size_category):
                             surface.blit(glow_pixel_surface, (gx_int, gy_int))
 
 class Background:
+    # Manages all background elements including stars, planets, and garbage.
     def __init__(self):
         self.bg_color = (15, 0, 30)
         self.world_min_x = WORLD_CENTER_X - WORLD_RADIUS
@@ -83,6 +78,7 @@ class Background:
         self._all_dust_lanes_data = []
         self._all_distant_planets_data = []
         self.solar_system_planets = []
+        self.all_garbage_items = [] # List to store all garbage objects
 
         self.sun_data = {
             'type': 'sun',
@@ -91,10 +87,11 @@ class Background:
             'color': SUN_COLOR
         }
 
-        self._generate_solar_system_orbiting_planets()
+        self._generate_solar_system_orbiting_planets() # This will also trigger garbage generation around planets
         self._generate_galactic_band_data()
         self._generate_outer_stars_data()
         self._generate_distant_planets_data()
+        self._generate_general_garbage() # Generate general field garbage
 
         self._populate_grid()
 
@@ -103,6 +100,7 @@ class Background:
         self.dust_lanes = self._all_dust_lanes_data
         self.planets = self._all_distant_planets_data
 
+    # Converts world coordinates to grid cell coordinates.
     def _get_grid_coords(self, world_x, world_y):
         grid_x = int((world_x - self.world_min_x) / CELL_SIZE)
         grid_y = int((world_y - self.world_min_y) / CELL_SIZE)
@@ -110,62 +108,110 @@ class Background:
         grid_y = max(0, min(grid_y, self.grid_rows - 1))
         return grid_x, grid_y
 
+    # Populates the spatial grid with static background elements.
     def _populate_grid(self):
-        # Add sun to the grid
         gx, gy = self._get_grid_coords(self.sun_data['world_pos'][0], self.sun_data['world_pos'][1])
         self.grid[gy][gx].append(self.sun_data)
 
-        # Static elements are added to the grid
         all_static_elements = self._all_stars_data + self._all_galactic_gas_data + \
                               self._all_dust_lanes_data + self._all_distant_planets_data
         for item in all_static_elements:
             gx, gy = self._get_grid_coords(item['world_pos'][0], item['world_pos'][1])
             self.grid[gy][gx].append(item)
+        # Garbage items are not added to the grid for simplicity; they are drawn from self.all_garbage_items.
 
-        # Orbiting solar_system_planets are NOT added to the static grid here,
-        # as their positions change. They will be drawn from their dedicated list.
-
-    def _generate_element_in_world_circle(self, radius_factor=1.0):
+    # Generates a random position within the circular world.
+    def _generate_element_in_world_circle(self, radius_factor=1.0, min_radius_factor=0.0):
         while True:
             angle = random.uniform(0, 2 * math.pi)
-            r = math.sqrt(random.random()) * WORLD_RADIUS * radius_factor
+            # Ensure uniform distribution over area by taking sqrt of random radius
+            r_norm = math.sqrt(random.uniform(min_radius_factor**2, radius_factor**2))
+            r = WORLD_RADIUS * r_norm
             x = WORLD_CENTER_X + r * math.cos(angle)
             y = WORLD_CENTER_Y + r * math.sin(angle)
-            if math.hypot(x - WORLD_CENTER_X, y - WORLD_CENTER_Y) <= WORLD_RADIUS * radius_factor:
-                return int(x), int(y)
+            # Check if within the world radius (mainly for min_radius_factor)
+            dist_sq = (x - WORLD_CENTER_X)**2 + (y - WORLD_CENTER_Y)**2
+            if (WORLD_RADIUS * min_radius_factor)**2 <= dist_sq <= (WORLD_RADIUS * radius_factor)**2 :
+                 return int(x), int(y)
 
+    # Generates a cluster of garbage items around a specified point.
+    def _generate_garbage_around_point(self, center_x, center_y, object_radius, count):
+        for _ in range(count):
+            # Spawn garbage in an annulus (ring) around the object
+            min_spawn_r_from_center = object_radius + MIN_DIST_GARBAGE_FROM_PLANET_SURFACE
+            max_spawn_r_from_center = object_radius + object_radius * PLANET_GARBAGE_ZONE_RADIUS_FACTOR
+
+            angle = random.uniform(0, 2 * math.pi)
+            # Uniform distribution in the annulus area
+            distance_from_center = math.sqrt(random.uniform(min_spawn_r_from_center**2, max_spawn_r_from_center**2))
+
+            gx = center_x + distance_from_center * math.cos(angle)
+            gy = center_y + distance_from_center * math.sin(angle)
+
+            # Basic check to ensure garbage is not inside the Sun if planet is very close
+            sun_dist_sq = (gx - WORLD_CENTER_X)**2 + (gy - WORLD_CENTER_Y)**2
+            if sun_dist_sq < (SUN_RADIUS + GARBAGE_ITEM_SIZE_RANGE[1])**2: # Check against sun radius + max garbage size
+                continue
+
+            self.all_garbage_items.append(Garbage(gx, gy))
+
+    # Generates the solar system's orbiting planets and associated garbage.
     def _generate_solar_system_orbiting_planets(self):
         planet_colors_ss = [
             (150, 100, 50), (100, 150, 100), (100, 100, 200),
             (200, 150, 100), (180, 180, 180)
         ]
         current_orbit_radius = MIN_ORBIT_RADIUS
+        orbit_spacing_per_planet = (MAX_ORBIT_RADIUS - MIN_ORBIT_RADIUS) / (NUM_SOLAR_SYSTEM_PLANETS if NUM_SOLAR_SYSTEM_PLANETS > 0 else 1)
+
         for i in range(NUM_SOLAR_SYSTEM_PLANETS):
-            orbit_radius = current_orbit_radius + random.uniform(0, (MAX_ORBIT_RADIUS - MIN_ORBIT_RADIUS) / (NUM_SOLAR_SYSTEM_PLANETS * 0.8 if NUM_SOLAR_SYSTEM_PLANETS > 0 else 1) )
-            if orbit_radius > MAX_ORBIT_RADIUS: orbit_radius = MAX_ORBIT_RADIUS
+            orbit_radius_offset = random.uniform(orbit_spacing_per_planet * 0.1, orbit_spacing_per_planet * 0.9)
+            orbit_radius = current_orbit_radius + orbit_radius_offset
+            if orbit_radius > MAX_ORBIT_RADIUS: orbit_radius = MAX_ORBIT_RADIUS # Clamp to max
 
             current_orbit_angle = random.uniform(0, 2 * math.pi)
-            orbit_speed = random.uniform(0.02, 0.1) / (1 + (orbit_radius / MAX_ORBIT_RADIUS)*2) # Slower speeds
 
-            planet_radius = random.randint(150, 1000)
+            # Make planets orbit slower: Original speed was random.uniform(0.02, 0.1) / (1 + (orbit_radius / MAX_ORBIT_RADIUS)*2)
+            # New slower speed:
+            base_slow_speed_numerator = random.uniform(0.002, 0.005) # Significantly reduced numerator
+            speed_falloff_denominator = 1 + (orbit_radius / MAX_ORBIT_RADIUS) * 3 # Slightly stronger falloff
+            orbit_speed = base_slow_speed_numerator / speed_falloff_denominator
+
+            planet_radius = random.randint(1000, 4000)
             color = random.choice(planet_colors_ss)
 
-            world_x = WORLD_CENTER_X + orbit_radius * math.cos(current_orbit_angle)
-            world_y = WORLD_CENTER_Y + orbit_radius * math.sin(current_orbit_angle)
+            # Calculate initial position for garbage generation around this planet
+            initial_world_x = WORLD_CENTER_X + orbit_radius * math.cos(current_orbit_angle)
+            initial_world_y = WORLD_CENTER_Y + orbit_radius * math.sin(current_orbit_angle)
 
             self.solar_system_planets.append({
-                'type': 'solar_system_planet', # Important for minimap and potential future logic
-                'world_pos': [world_x, world_y],
+                'type': 'solar_system_planet',
+                'world_pos': [initial_world_x, initial_world_y], # This will be updated by orbit
                 'radius': planet_radius,
                 'color': color,
                 'orbit_radius': orbit_radius,
                 'orbit_speed': orbit_speed,
                 'current_orbit_angle': current_orbit_angle
             })
-            current_orbit_radius = orbit_radius + planet_radius * 2 + random.uniform(50,150)
 
+            # Generate garbage around this planet's initial position
+            self._generate_garbage_around_point(initial_world_x, initial_world_y, planet_radius, GARBAGE_PER_PLANET_CLUSTER)
+
+            current_orbit_radius = orbit_radius + planet_radius * 2 + random.uniform(50,150) # Ensure spacing for next planet
+
+    # Generates general garbage items scattered throughout the galaxy.
+    def _generate_general_garbage(self):
+        for _ in range(NUM_GENERAL_GARBAGE):
+            # Spawn anywhere in the world, but avoid the immediate vicinity of the sun's core
+            min_dist_from_sun_center_factor = (SUN_RADIUS + 200) / WORLD_RADIUS # Avoid sun + buffer
+            gx, gy = self._generate_element_in_world_circle(radius_factor=1.0, min_radius_factor=min_dist_from_sun_center_factor)
+
+            # Optional: Could add checks here to avoid spawning general garbage too close to planet clusters
+            # For now, keeping it simple. Some overlap is acceptable.
+            self.all_garbage_items.append(Garbage(gx, gy))
+
+    # Generates the visual data for the galactic band.
     def _generate_galactic_band_data(self):
-        # Your existing values are preserved
         num_segments = 32; path_points = []; path_start_x = WORLD_CENTER_X - WORLD_RADIUS*0.8; path_end_x = WORLD_CENTER_X + WORLD_RADIUS*0.8
         current_y = WORLD_CENTER_Y + random.randint(-WORLD_RADIUS//4, WORLD_RADIUS//4); path_points.append((path_start_x, current_y))
         for i in range(1,num_segments+1):
@@ -217,8 +263,9 @@ class Background:
                     blob_surface=pygame.Surface((blob_size,blob_size),pygame.SRCALPHA);blob_surface.fill((dust_color[0],dust_color[1],dust_color[2],alpha))
                     self._all_dust_lanes_data.append({'type':'dust_blob','surface':blob_surface,'world_pos':(int(dust_pos_vec.x),int(dust_pos_vec.y))})
 
+    # Generates data for stars outside the main galactic band.
     def _generate_outer_stars_data(self):
-        num_outer_stars = 200000 # Your value
+        num_outer_stars = 200000
         star_colors_outer = [(200,200,220), (180,180,200), (220,220,255)]
         for _ in range(num_outer_stars):
             angle=random.uniform(0,2*math.pi);r_norm=1.0-math.sqrt(1.0-random.random());r=WORLD_RADIUS*r_norm
@@ -229,8 +276,9 @@ class Background:
                 brightness_mod=random.uniform(0.5,0.9);final_c=(min(255,int(base_c[0]*brightness_mod)),min(255,int(base_c[1]*brightness_mod)),min(255,int(base_c[2]*brightness_mod)))
                 self._all_stars_data.append({'type':'star','world_pos':(x,y),'color':final_c,'size_cat':size_cat})
 
+    # Generates data for small, distant planets.
     def _generate_distant_planets_data(self):
-        num_planets = 6000 # Your value
+        num_planets = 6000
         planet_colors = [(80,80,110),(110,80,80),(80,110,80),(110,110,80)]
         for _ in range(num_planets):
             x,y=self._generate_element_in_world_circle(0.95)
@@ -241,12 +289,15 @@ class Background:
             color=random.choice(planet_colors)
             self._all_distant_planets_data.append({'type':'distant_planet','world_pos':(x,y),'radius':radius,'color':color})
 
+    # Updates the positions of orbiting planets.
     def update(self, dt):
         for planet_data in self.solar_system_planets:
             planet_data['current_orbit_angle'] += planet_data['orbit_speed'] * dt
             planet_data['world_pos'][0] = WORLD_CENTER_X + planet_data['orbit_radius'] * math.cos(planet_data['current_orbit_angle'])
             planet_data['world_pos'][1] = WORLD_CENTER_Y + planet_data['orbit_radius'] * math.sin(planet_data['current_orbit_angle'])
+            # Garbage items are static and do not update their positions here.
 
+    # Draws all background elements.
     def draw(self, surface, camera_x, camera_y):
         surface.fill(self.bg_color)
 
@@ -259,7 +310,6 @@ class Background:
         start_row = max(0, cam_min_gy); end_row = min(self.grid_rows - 1, cam_max_gy)
 
         visible_gas = []; visible_dust = []; visible_stars = []; visible_distant_planets = []
-        # Note: solar_system_planets will be drawn separately from their own list
 
         for gy in range(start_row, end_row + 1):
             for gx in range(start_col, end_col + 1):
@@ -269,7 +319,6 @@ class Background:
                     elif item_type == 'dust_blob': visible_dust.append(item)
                     elif item_type == 'star': visible_stars.append(item)
                     elif item_type == 'distant_planet': visible_distant_planets.append(item)
-                    # Sun and solar_system_planets are not retrieved from grid for drawing here
 
         for gas_blob in visible_gas:
             screen_x = gas_blob['world_pos'][0] - camera_x; screen_y = gas_blob['world_pos'][1] - camera_y
@@ -285,7 +334,6 @@ class Background:
             screen_x = star_data['world_pos'][0] - camera_x; screen_y = star_data['world_pos'][1] - camera_y
             draw_pixel_star(surface, screen_x, screen_y, star_data['color'], star_data['size_cat'])
 
-        # Draw Distant Planets (the 6000 tiny ones from the grid)
         for planet_data in visible_distant_planets:
             planet_world_pos = planet_data['world_pos']
             radius = planet_data['radius']
@@ -293,13 +341,11 @@ class Background:
             screen_y = planet_world_pos[1] - camera_y
             draw_pixel_circle(surface, planet_data['color'], screen_x, screen_y, radius)
 
-        # Draw Solar System Planets (orbiting ones) - from their own list
         for planet_data in self.solar_system_planets:
             planet_world_pos = planet_data['world_pos']
             radius = planet_data['radius']
             screen_x = planet_world_pos[0] - camera_x
             screen_y = planet_world_pos[1] - camera_y
-            # Culling for solar system planets
             if not (screen_x + radius < 0 or screen_x - radius > SCREEN_WIDTH or \
                     screen_y + radius < 0 or screen_y - radius > SCREEN_HEIGHT):
                 draw_pixel_circle(surface, planet_data['color'], screen_x, screen_y, radius)
@@ -309,3 +355,4 @@ class Background:
         if not (sun_screen_x + SUN_RADIUS < 0 or sun_screen_x - SUN_RADIUS > SCREEN_WIDTH or \
                 sun_screen_y + SUN_RADIUS < 0 or sun_screen_y - SUN_RADIUS > SCREEN_HEIGHT):
             pygame.draw.circle(surface, self.sun_data['color'], (int(sun_screen_x), int(sun_screen_y)), self.sun_data['radius'])
+        # Garbage is drawn in main.py after the background.
