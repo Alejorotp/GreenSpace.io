@@ -10,6 +10,9 @@ __pycache__/
 Dockerfile
 docker-compose.yml
 
+# Games
+savegame.txt
+
 # Distribution / packaging
 .Python
 build/
