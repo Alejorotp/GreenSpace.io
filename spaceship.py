@@ -17,7 +17,7 @@ try:
 except pygame.error as e:
     print(f"Error loading or scaling spaceshipSprite.png: {e}")
     SCALED_SPACESHIP_IMAGE = pygame.Surface(DESIRED_SIZE, pygame.SRCALPHA)
-    SCALED_SPACESHIP_IMAGE.fill((0,0,0,0)) # Transparent background for the fallback.
+    SCALED_SPACESHIP_IMAGE.fill((0,0,0,0)) # Fallback uses transparent background.
     # Draw a simple triangle as the fallback sprite.
     pygame.draw.polygon(SCALED_SPACESHIP_IMAGE, (255, 255, 255),
                         [(DESIRED_SIZE[0] // 2, 10), # Top point.
@@ -30,8 +30,8 @@ class SpaceShip:
     and particle effects for thrust and destruction.
     """
     def __init__(self, initial_x, initial_y):
-        self.x = float(initial_x)  # Current world x-coordinate.
-        self.y = float(initial_y)  # Current world y-coordinate.
+        self.x = float(initial_x)  # World x-coordinate.
+        self.y = float(initial_y)  # World y-coordinate.
 
         # Velocity components:
         # vx_0, vy_0: current persistent velocity vector.
@@ -45,14 +45,14 @@ class SpaceShip:
         self.image_to_draw = self.original_image    # Current image to draw (potentially rotated).
         self.current_angle = 90.0  # Spaceship's orientation in degrees (90.0 conventionally means facing 'up').
 
-        self.rect = self.image_to_draw.get_rect(center=(self.x, self.y)) # Pygame Rect for positioning.
+        self.rect = self.image_to_draw.get_rect(center=(self.x, self.y)) # Pygame Rect for rendering position.
 
-        self.is_thrusting = False   # Boolean flag indicating if the ship is currently thrusting.
-        self.particles = []         # List to store active particles (for thrust and explosion).
+        self.is_thrusting = False    # True if the ship is currently thrusting.
+        self.particles = []          # List to store active particles (for thrust and explosion).
         self.particle_emit_cooldown = 0 # Cooldown timer to regulate thrust particle emission rate.
         self.PARTICLE_EMIT_DELAY = 2    # Delay in frames between consecutive thrust particle emissions.
 
-        self.alive = True           # True if the spaceship is operational, False if destroyed.
+        self.alive = True            # True if the spaceship is operational, False if destroyed.
 
     def _emit_particles(self):
         """Generates thrust particles when the ship is accelerating."""
@@ -84,7 +84,7 @@ class SpaceShip:
             particle_vy = (particle_speed * math.sin(particle_actual_direction_rad)) + self.vy_0 * inherit_factor
 
             lifespan = random.randint(15, 40) # Particle lifespan in frames.
-            size = random.randint(2, 5)     # Particle size in pixels.
+            size = random.randint(2, 5)       # Particle size in pixels.
             color_choice = random.choice([(255, 100, 0), (255, 150, 0), (255, 200, 50), (255, 50, 0)]) # Orange/Yellow hues.
 
             # Final particle spawn position with a slight random jitter.
@@ -149,7 +149,7 @@ class SpaceShip:
             p['world_x'] += p['vx']
             p['world_y'] += p['vy'] # Positive vy makes particle move 'down' (increases y-coordinate).
             p['lifespan'] -= 1
-            if p['lifespan'] > 0: # Keep particle if its lifespan hasn't expired.
+            if p['lifespan'] > 0:
                 new_particles.append(p)
         self.particles = new_particles
 
@@ -157,7 +157,8 @@ class SpaceShip:
         """Draws the spaceship and its particles onto the given surface, adjusted for camera."""
         # Draw all active particles.
         for p in self.particles:
-            screen_px = p['world_x'] - camera_x # Convert world to screen coordinates.
+            # Convert particle world to screen coordinates.
+            screen_px = p['world_x'] - camera_x
             screen_py = p['world_y'] - camera_y
 
             # Particle size may decrease over its lifespan for a fading effect.
@@ -168,7 +169,7 @@ class SpaceShip:
             if screen_px + current_size > 0 and screen_px - current_size < SCREEN_WIDTH and \
                screen_py + current_size > 0 and screen_py - current_size < SCREEN_HEIGHT:
                 pygame.draw.rect(surface, p['color'],
-                                 (int(screen_px - current_size / 2), # Center the rect.
+                                 (int(screen_px - current_size / 2),
                                   int(screen_py - current_size / 2),
                                   current_size, current_size))
 
@@ -192,8 +193,9 @@ class SpaceShip:
         """
         collider_width = DESIRED_SIZE[0] * 0.7 # 70% of the visual width.
         collider_height = DESIRED_SIZE[1] * 0.7# 70% of the visual height.
+        # Center the collider rect on ship's world position.
         return pygame.Rect(
-            self.x - collider_width / 2.0,  # Center the collider rect on ship's world position.
+            self.x - collider_width / 2.0,
             self.y - collider_height / 2.0,
             collider_width,
             collider_height

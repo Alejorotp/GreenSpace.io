@@ -1,4 +1,4 @@
-# garbage.py (Modified __init__ method)
+# garbage.py
 
 import pygame
 import random
@@ -18,14 +18,14 @@ class Garbage:
     Represents a single piece of collectable space garbage.
     It can be attracted to the spaceship by its magnet.
     """
-    def __init__(self, world_x, world_y, loaded_size=None): # Added loaded_size parameter
+    def __init__(self, world_x, world_y, loaded_size=None):
         self.world_x = float(world_x)
         self.world_y = float(world_y)
 
         if loaded_size is not None:
             self.size = loaded_size  # Use provided size if loading
         else:
-            # Otherwise, determine size randomly as before for new garbage
+            # Otherwise, determine size randomly for new garbage
             self.size = random.randint(GARBAGE_SIZE_RANGE[0], GARBAGE_SIZE_RANGE[1])
 
         self.image = pygame.transform.smoothscale(ORIGINAL_GARBAGE_IMAGE, (self.size, self.size))
@@ -44,13 +44,13 @@ class Garbage:
         if dist_sq < SHIP_MAGNET_RANGE**2 and dist_sq > 1e-6:
             dist = math.sqrt(dist_sq)
             size_range_delta = GARBAGE_SIZE_RANGE[1] - GARBAGE_SIZE_RANGE[0]
-            if size_range_delta < 1e-5: size_range_delta = 1e-5
+            if size_range_delta < 1e-5: size_range_delta = 1e-5 # Avoid division by zero if range is minimal
             size_factor_normalized = (GARBAGE_SIZE_RANGE[1] - self.size) / size_range_delta
-            size_factor_normalized = max(0.0, min(1.0, size_factor_normalized))
+            size_factor_normalized = max(0.0, min(1.0, size_factor_normalized)) # Clamp between 0 and 1
             effective_strength_factor = (MIN_GARBAGE_ATTRACTION_SPEED_FACTOR + \
-                                        (1.0 - MIN_GARBAGE_ATTRACTION_SPEED_FACTOR) * size_factor_normalized)
+                                         (1.0 - MIN_GARBAGE_ATTRACTION_SPEED_FACTOR) * size_factor_normalized)
             target_speed_pps = (BASE_MAGNET_STRENGTH / (self.size * (dist + 10.0))) * effective_strength_factor
-            target_speed_pps = min(target_speed_pps, SHIP_MAGNET_RANGE)
+            target_speed_pps = min(target_speed_pps, SHIP_MAGNET_RANGE) # Cap speed to magnet range
             move_dist_this_frame = target_speed_pps * dt
             self.world_x += (dx / dist) * move_dist_this_frame
             self.world_y += (dy / dist) * move_dist_this_frame
@@ -72,8 +72,9 @@ class Garbage:
         with the spaceship (e.g., for collection).
         Collider is smaller for harder recollection.
         """
+        # Collider is centered on the garbage item.
         return pygame.Rect(
-            self.world_x - self.size / 4.0, # Centered, but half width/height
+            self.world_x - self.size / 4.0,
             self.world_y - self.size / 4.0,
             self.size / 2.0,
             self.size / 2.0
